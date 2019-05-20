@@ -1,0 +1,158 @@
+KUBERNETES NOTES:
+
+
+apiVersion: v1
+kind: Pod
+metadata:
+  name: busybox
+spec:
+  containers:
+  - image: busybox:1.28.4
+    command:
+      - sleep
+      - "3600"
+    name: busybox
+  restartPolicy: Always
+
+
+
+  kubectl get pods -o custom-columns=POD:metadata.name,NODE:spec.nodeNAME —sort-by spec.nodeNAME -n kube-system
+
+
+  #curl localhost:8001/api/v1/namespaces/my-ns/services_project_name
+
+
+  # cat /var/run/secrets/kubernetes.io/sericeaccount/token
+
+  curl --head http://127.0.0.0.1:8081   #to curl the port forward running
+
+  curl -I localhost:<node port>   # to view headers of the deployment
+
+  View the version of the server and client on the master node:
+
+kubectl version --short
+View the version of the scheduler and controller manager:
+
+kubectl get pods -n kube-system kube-controller-manager-chadcrowell1c.mylabserver.com -o yaml
+View the name of the kube-controller pod:
+
+kubectl get pods -n kube-system
+Set the VERSION variable to the latest stable release of Kubernetes:
+
+export VERSION=v1.14.1
+Set the ARCH variable to the amd64 system:
+
+export ARCH=amd64
+View the latest stable version of Kubernetes using the variable:
+
+echo $VERSION
+Curl the latest stable version of Kubernetes:
+
+curl -sSL https://dl.k8s.io/release/${VERSION}/bin/linux/${ARCH}/kubeadm > kubeadm
+Install the latest version of kubeadm:
+
+sudo install -o root -g root -m 0755 ./kubeadm /usr/bin/kubeadm
+Check the version of kubeadm:
+
+sudo kubeadm version
+Plan the upgrade:
+
+sudo kubeadm upgrade plan
+Apply the upgrade to 1.14.1:
+
+kubeadm upgrade apply v1.14.1
+View the differences between the old and new manifests:
+
+diff kube-controller-manager.yaml /etc/kubernetes/manifests/kube-controller-manager.yaml
+Curl the latest version of kubelet:
+
+curl -sSL https://dl.k8s.io/release/${VERSION}/bin/linux/${ARCH}/kubelet > kubelet
+Install the latest version of kubelet:
+
+sudo install -o root -g root -m 0755 ./kubelet /usr/bin/kubelet
+Restart the kubelet service:
+
+sudo systemctl restart kubelet.service
+Watch the nodes as they change version:
+
+kubectl get nodes -w
+
+See which pods are running on which nodes:
+
+kubectl get pods -o wide
+Evict the pods on a node:
+
+kubectl drain [node_name] --ignore-daemonsets
+Watch as the node changes status:
+
+kubectl get nodes -w
+Schedule pods to the node after maintenance is complete:
+
+kubectl uncordon [node_name]
+Remove a node from the cluster:
+
+kubectl delete node [node_name]
+Generate a new token:
+
+sudo kubeadm token generate
+List the tokens:
+
+sudo kubeadm token list
+Print the kubeadm join command to join a node to the cluster:
+
+sudo kubeadm token create [token_name] --ttl 2h --print-join-command
+
+
+Backing Up and Restoring a Kubernetes Cluster
+
+Get the etcd binaries:
+
+wget https://github.com/etcd-io/etcd/releases/download/v3.3.12/etcd-v3.3.12-linux-amd64.tar.gz
+Unzip the compressed binaries:
+
+tar xvf etcd-v3.3.12-linux-amd64.tar.gz
+Move the files into /usr/local/bin:
+
+sudo mv etcd-v3.3.12-linux-amd64/etcd* /usr/local/bin
+Take a snapshot of the etcd datastore using etcdctl:
+
+sudo ETCDCTL_API=3 etcdctl snapshot save snapshot.db --cacert /etc/kubernetes/pki/etcd/server.crt --cert /etc/kubernetes/pki/etcd/ca.crt --key /etc/kubernetes/pki/etcd/ca.key
+View the help page for etcdctl:
+
+ETCDCTL_API=3 etcdctl --help
+Browse to the folder that contains the certificate files:
+
+cd /etc/kubernetes/pki/etcd/
+View that the snapshot was successful:
+
+ETCDCTL_API=3 etcdctl --write-out=table snapshot status snapshot.db
+Zip up the contents of the etcd directory:
+
+sudo tar -zcvf etcd.tar.gz etcd
+Copy the etcd directory to another server:
+
+scp etcd.tar.gz cloud_user@18.219.235.42:~/
+
+
+Pod and Node Networking
+
+Kubernetes keeps networking simple for effective communication between pods, even if they are located on a different node. In this lesson, we’ll talk about pod communication from within a node, including how to inspect the virtual interfaces, and then get into what happens when a pod wants to talk to another pod on a different node.
+
+See which node our pod is on:
+
+kubectl get pods -o wide
+Log in to the node:
+
+ssh [node_name]
+View the node's virtual network interfaces:
+
+ifconfig
+View the containers in the pod:
+
+docker ps
+Get the process ID for the container:
+
+docker inspect --format '{{ .State.Pid }}' [container_id]
+Use nsenter to run a command in the process's network namespace:
+
+nsenter -t [container_pid] -n ip addr
