@@ -156,3 +156,174 @@ docker inspect --format '{{ .State.Pid }}' [container_id]
 Use nsenter to run a command in the process's network namespace:
 
 nsenter -t [container_pid] -n ip addr
+
+
+
+
+When handling traffic from outside sources, there are two ways to direct that traffic to your pods: deploying a load balancer, and creating an ingress controller and an Ingress resource. In this lesson, we will talk about the benefits of each and how Kubernetes distributes traffic to the pods on a node to reduce latency and direct traffic to the appropriate services within your cluster.
+
+View the list of services:
+
+kubectl get services
+The load balancer YAML spec:
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: nginx-loadbalancer
+spec:
+  type: LoadBalancer
+  ports:
+  - port: 80
+    targetPort: 80
+  selector:
+    app: nginx
+Create a new deployment:
+
+kubectl run kubeserve2 --image=chadmcrowell/kubeserve2
+View the list of deployments:
+
+kubectl get deployments
+Scale the deployments to 2 replicas:
+
+kubectl scale deployment/kubeserve2 --replicas=2
+View which pods are on which nodes:
+
+kubectl get pods -o wide
+Create a load balancer from a deployment:
+
+kubectl expose deployment kubeserve2 --port 80 --target-port 8080 --type LoadBalancer
+View the services in your cluster:
+
+kubectl get services
+Watch as an external port is created for a service:
+
+kubectl get services -w
+Look at the YAML for a service:
+
+kubectl get services kubeserve2 -o yaml
+Curl the external IP of the load balancer:
+
+curl http://[external-ip]
+View the annotation associated with a service:
+
+kubectl describe services kubeserve
+Set the annotation to route load balancer traffic local to the node:
+
+kubectl annotate service kubeserve2 externalTrafficPolicy=Local
+The YAML for an Ingress resource:
+
+apiVersion: extensions/v1beta1
+kind: Ingress
+metadata:
+  name: name-virtual-host-ingress
+spec:
+  rules:
+  - host: first.bar.com
+    http:
+      paths:
+      - backend:
+          serviceName: service1
+          servicePort: 80
+  - host: second.foo.com
+    http:
+      paths:
+      - backend:
+          serviceName: service2
+          servicePort: 80
+  - http:
+      paths:
+      - backend:
+          serviceName: service3
+          servicePort: 80
+Edit the ingress rules:
+
+kubectl edit ingress
+View the existing ingress rules:
+
+kubectl describe ingress
+Curl the hostname of your Ingress resource:
+
+curl http://kubeserve2.example.com
+
+
+CoreDNS is now the new default DNS plugin for Kubernetes. In this lesson, we’ll go over the hostnames for pods and services. We will also discover how you can customize DNS to include your own nameservers.
+
+View the CoreDNS pods in the kube-system namespace:
+
+kubectl get pods -n kube-system
+View the CoreDNS deployment in your Kubernetes cluster:
+
+kubectl get deployments -n kube-system
+View the service that performs load balancing for the DNS server:
+
+kubectl get services -n kube-system
+Spec for the busybox pod:
+
+apiVersion: v1
+kind: Pod
+metadata:
+  name: busybox
+  namespace: default
+spec:
+  containers:
+  - image: busybox:1.28.4
+    command:
+      - sleep
+      - "3600"
+    imagePullPolicy: IfNotPresent
+    name: busybox
+  restartPolicy: Always
+View the resolv.conf file that contains the nameserver and search in DNS:
+
+kubectl exec -it busybox -- cat /etc/resolv.conf
+Look up the DNS name for the native Kubernetes service:
+
+kubectl exec -it busybox -- nslookup kubernetes
+Look up the DNS names of your pods:
+
+kubectl exec -ti busybox -- nslookup [pod-ip-address].default.pod.cluster.local
+Look up a service in your Kubernetes cluster:
+
+kubectl exec -it busybox -- nslookup kube-dns.kube-system.svc.cluster.local
+Get the logs of your CoreDNS pods:
+
+kubectl logs [coredns-pod-name]
+YAML spec for a headless service:
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: kube-headless
+spec:
+  clusterIP: None
+  ports:
+  - port: 80
+    targetPort: 8080
+  selector:
+    app: kubserve2
+YAML spec for a custom DNS pod:
+
+apiVersion: v1
+kind: Pod
+metadata:
+  namespace: default
+  name: dns-example
+spec:
+  containers:
+    - name: test
+      image: nginx
+  dnsPolicy: "None"
+  dnsConfig:
+    nameservers:
+      - 8.8.8.8
+    searches:
+      - ns1.svc.cluster.local
+      - my.dns.search.suffix
+    options:
+      - name: ndots
+        value: "2"
+      - name: edns0
+
+
+
