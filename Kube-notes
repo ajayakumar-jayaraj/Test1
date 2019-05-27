@@ -104,6 +104,8 @@ sudo kubeadm token create [token_name] --ttl 2h --print-join-command
 
 
 Backing Up and Restoring a Kubernetes Cluster
+========================================================
+
 
 Get the etcd binaries:
 
@@ -135,6 +137,8 @@ scp etcd.tar.gz cloud_user@18.219.235.42:~/
 
 
 Pod and Node Networking
+==========================================
+
 
 Kubernetes keeps networking simple for effective communication between pods, even if they are located on a different node. In this lesson, we’ll talk about pod communication from within a node, including how to inspect the virtual interfaces, and then get into what happens when a pod wants to talk to another pod on a different node.
 
@@ -382,6 +386,9 @@ kubectl get pods -o wide
 
 
 Scheduling pods with Resource limits and label selectors:
+==============================================================
+
+
 
 In order to share the resources of your node properly, you can set resource limits and requests in Kubernetes. This allows you to reserve enough CPU and memory for your application while still maintaining system health. In this lesson, we will create some requests and limits in our pod YAML to show how it’s used by the node.
 
@@ -467,6 +474,9 @@ kubectl exec -it limited-pod top
 Helpful Links
 Configure Default CPU Requests and Limits
 Configure Default Memory Requests and Limits
+
+
+
 
 
 DaemonSets do not use a scheduler to deploy pods. In fact, there are currently DaemonSets in the Kubernetes cluster that we made. In this lesson, I will show you where to find those and how to create your own DaemonSet pods to deploy without the need for a scheduler.
@@ -1393,6 +1403,428 @@ Connect to our pod and list the contents of the /data directory:
 
 kubectl exec -it [pod-name] -- ls /data
 
+
+Lab:
+Creating Persistent Storage for Pods in Kubernetes
+=======================================================
+
+
+In this hands-on lab, to decouple our storage from our pods, we will create a persistent volume to mount for use by our pods. We will deploy a mongodb image that will contain a MongoDB database. We will first create the persistent volume, then create the pod YAML for deploying the pod to mount the volume. We will then delete the pod and create a new pod, which will access that same volume.
+
+Log in to the Kube Master server using the credentials on the lab page (either in your local terminal, using the Instant Terminal feature, or using the public IP), and work through the objectives listed.
+
+Create a PersistentVolume.
+Use the following YAML spec for the PersistentVolume named mongodb-pv.yaml:
+
+ apiVersion: v1
+ kind: PersistentVolume
+ metadata:
+   name: mongodb-pv
+ spec:
+   storageClassName: local-storage
+   capacity:
+     storage: 1Gi
+   accessModes:
+     - ReadWriteOnce
+   hostPath:
+     path: "/mnt/data"
+
+
+Then, create the PersistentVolume:
+
+ kubectl apply -f mongodb-pv.yaml
+Create a PersistentVolumeClaim.
+Use the following YAML spec for the PersistentVolumeClaim named mongodb-pvc.yaml:
+
+ apiVersion: v1
+ kind: PersistentVolumeClaim
+ metadata:
+   name: mongodb-pvc
+ spec:
+   storageClassName: local-storage
+   accessModes:
+     - ReadWriteOnce
+   resources:
+     requests:
+       storage: 1Gi
+Then, create the PersistentVolumeClaim:
+
+ kubectl apply -f mongodb-pvc.yaml
+Create a pod from the mongodb image, with a mounted volume to mount path /data/db.
+Use the following YAML spec for the pod named mongodb-pod.yaml:
+
+ apiVersion: v1
+ kind: Pod
+ metadata:
+   name: mongodb
+ spec:
+   containers:
+   - image: mongo
+     name: mongodb
+     volumeMounts:
+     - name: mongodb-data
+       mountPath: /data/db
+     ports:
+     - containerPort: 27017
+       protocol: TCP
+   volumes:
+   - name: mongodb-data
+     persistentVolumeClaim:
+       claimName: mongodb-pvc
+Then, create the pod:
+
+ kubectl apply -f mongodb-pod.yaml
+Verify the pod was created:
+
+ kubectl get pods
+Access the node and view the data within the volume.
+Run the following command:
+
+ kubectl get nodes
+Connect to the worker node (get the <node_hostname> from the NAME column of the above output), using the same password as the Kube Master:
+
+ ssh <node_hostname>
+Switch to the /mnt/data directory:
+
+ cd /mnt/data
+List the contents of the directory:
+
+ ls
+Delete the pod and create a new pod with the same YAML spec.
+Exit out of the worker node:
+
+ exit
+Delete the pod:
+
+ kubectl delete pod mongodb
+Create a new pod:
+
+ kubectl apply -f mongodb-pod.yaml
+Verify the data still resides on the volume.
+Log in to the worker node again:
+
+ ssh <node_hostname>
+Switch to the /mnt/data directory:
+
+ cd /mnt/data
+List the contents of the directory:
+
+ ls
+
+
+
+Monitoring the Cluster Components
+=============================================================
+
+
+KUBERNETES THE HARDWAY:
+=================================
+
+
+Provisioning of CA Certificate:
+=====================================
+
+
+In order to generate the certificates needed by Kubernetes, you must first provision a certificate authority. This lesson will guide you through the process of provisioning a new certificate authority for your Kubernetes cluster. After completing this lesson, you should have a certificate authority, which consists of two files: ca-key.pem and ca.pem.
+
+Here are the commands used in the demo:
+
+cd ~/
+mkdir kthw
+cd kthw/
+UPDATE: cfssljson and cfssl will need to be installed. To install, complete the following commands:
+
+sudo curl -s -L -o /bin/cfssl https://pkg.cfssl.org/R1.2/cfssl_linux-amd64
+sudo curl -s -L -o /bin/cfssljson https://pkg.cfssl.org/R1.2/cfssljson_linux-amd64
+sudo curl -s -L -o /bin/cfssl-certinfo https://pkg.cfssl.org/R1.2/cfssl-certinfo_linux-amd64
+sudo chmod +x /bin/cfssl*
+Use this command to generate the certificate authority. Include the opening and closing curly braces to run this entire block as a single command.
+
+{
+
+cat > ca-config.json << EOF
+{
+  "signing": {
+    "default": {
+      "expiry": "8760h"
+    },
+    "profiles": {
+      "kubernetes": {
+        "usages": ["signing", "key encipherment", "server auth", "client auth"],
+        "expiry": "8760h"
+      }
+    }
+  }
+}
+EOF
+
+cat > ca-csr.json << EOF
+{
+  "CN": "Kubernetes",
+  "key": {
+    "algo": "rsa",
+    "size": 2048
+  },
+  "names": [
+    {
+      "C": "US",
+      "L": "Portland",
+      "O": "Kubernetes",
+      "OU": "CA",
+      "ST": "Oregon"
+    }
+  ]
+}
+EOF
+
+cfssl gencert -initca ca-csr.json | cfssljson -bare ca
+
+}
+
+
+
+Generate Client certificate:
+
+1) Admin client certificate
+
+2) Kubelet client certificate (  this will be for each worker server)
+
+3) Generate for kube controller mgr
+
+4)kubbe proxy
+
+5) kube scheduler
+
+
+example:
+
+Now that you have provisioned a certificate authority for the Kubernetes cluster, you are ready to begin generating certificates. The first set of certificates you will need to generate consists of the client certificates used by various Kubernetes components. In this lesson, we will generate the following client certificates: admin, kubelet (one for each worker node), kube-controller-manager, kube-proxy, and kube-scheduler. After completing this lesson, you will have the client certificate files which you will need later to set up the cluster.
+
+Here are the commands used in the demo. The command blocks surrounded by curly braces can be entered as a single command:
+
+cd ~/kthw
+Admin Client certificate:
+
+{
+
+cat > admin-csr.json << EOF
+{
+  "CN": "admin",
+  "key": {
+    "algo": "rsa",
+    "size": 2048
+  },
+  "names": [
+    {
+      "C": "US",
+      "L": "Portland",
+      "O": "system:masters",
+      "OU": "Kubernetes The Hard Way",
+      "ST": "Oregon"
+    }
+  ]
+}
+EOF
+
+cfssl gencert \
+  -ca=ca.pem \
+  -ca-key=ca-key.pem \
+  -config=ca-config.json \
+  -profile=kubernetes \
+  admin-csr.json | cfssljson -bare admin
+
+}
+Kubelet Client certificates. Be sure to enter your actual cloud server values for all four of the variables at the top:
+
+WORKER0_HOST=<Public hostname of your first worker node cloud server>
+WORKER0_IP=<Private IP of your first worker node cloud server>
+WORKER1_HOST=<Public hostname of your second worker node cloud server>
+WORKER1_IP=<Private IP of your second worker node cloud server>
+
+{
+cat > ${WORKER0_HOST}-csr.json << EOF
+{
+  "CN": "system:node:${WORKER0_HOST}",
+  "key": {
+    "algo": "rsa",
+    "size": 2048
+  },
+  "names": [
+    {
+      "C": "US",
+      "L": "Portland",
+      "O": "system:nodes",
+      "OU": "Kubernetes The Hard Way",
+      "ST": "Oregon"
+    }
+  ]
+}
+EOF
+
+cfssl gencert \
+  -ca=ca.pem \
+  -ca-key=ca-key.pem \
+  -config=ca-config.json \
+  -hostname=${WORKER0_IP},${WORKER0_HOST} \
+  -profile=kubernetes \
+  ${WORKER0_HOST}-csr.json | cfssljson -bare ${WORKER0_HOST}
+
+cat > ${WORKER1_HOST}-csr.json << EOF
+{
+  "CN": "system:node:${WORKER1_HOST}",
+  "key": {
+    "algo": "rsa",
+    "size": 2048
+  },
+  "names": [
+    {
+      "C": "US",
+      "L": "Portland",
+      "O": "system:nodes",
+      "OU": "Kubernetes The Hard Way",
+      "ST": "Oregon"
+    }
+  ]
+}
+EOF
+
+cfssl gencert \
+  -ca=ca.pem \
+  -ca-key=ca-key.pem \
+  -config=ca-config.json \
+  -hostname=${WORKER1_IP},${WORKER1_HOST} \
+  -profile=kubernetes \
+  ${WORKER1_HOST}-csr.json | cfssljson -bare ${WORKER1_HOST}
+
+}
+
+
+Generating the Kubernetes API Server Certificate
+
+HANDS ON:
+=============
+
+
+Building a Kubernetes Cluster with Kubeadm
+Introduction
+A Kubernetes cluster is a powerful tool for managing containers in a highly-available manner. Kubeadm greatly simplifies the process of setting up a simple cluster. In this hands-on lab, you will build your own working Kubernetes cluster using Kubeadm.
+
+Solution
+Begin by logging in to the lab servers using the credentials provided on the hands-on lab page:
+
+Install Docker on all three nodes
+====================================
+
+
+
+ssh cloud_user@PUBLIC_IP_ADDRESS
+Install Docker on all three nodes
+Do the following on all three nodes:
+
+Add the Docker GPG key:
+
+ curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo apt-key add -
+Add the Docker repository:
+
+ sudo add-apt-repository \
+    "deb [arch=amd64] https://download.docker.com/linux/ubuntu \
+    $(lsb_release -cs) \
+    stable"
+Update packages:
+
+ sudo apt-get update
+Install Docker:
+
+ sudo apt-get install -y docker-ce=18.06.1~ce~3-0~ubuntu
+Hold Docker at this specific version:
+
+ sudo apt-mark hold docker-ce
+Verify that Docker is up and running with:
+
+ sudo systemctl status docker
+Make sure the Docker service status is active (running)!
+
+Install Kubeadm, Kubelet, and Kubectl on all three nodes
+==================================================================
+Install the Kubernetes components by running this on all three nodes:
+
+Add the Kubernetes GPG key:
+
+ curl -s https://packages.cloud.google.com/apt/doc/apt-key.gpg | sudo apt-key add -
+Add the Kubernetes repository:
+
+ cat << EOF | sudo tee /etc/apt/sources.list.d/kubernetes.list
+ deb https://apt.kubernetes.io/ kubernetes-xenial main
+ EOF
+Update packages:
+
+ sudo apt-get update
+Install kubelet, kubeadm, and kubectl:
+
+ sudo apt-get install -y kubelet=1.12.7-00 kubeadm=1.12.7-00 kubectl=1.12.7-00
+Hold the Kubernetes components at this specific version:
+
+ sudo apt-mark hold kubelet kubeadm kubectl
+
+
+Bootstrap the cluster on the Kube master node
+=============================================================
+
+On the Kube master node, do this:
+
+ sudo kubeadm init --pod-network-cidr=10.244.0.0/16
+That command may take a few minutes to complete.
+
+When it is done, set up the local kubeconfig:
+
+ mkdir -p $HOME/.kube
+ sudo cp -i /etc/kubernetes/admin.conf $HOME/.kube/config
+ sudo chown $(id -u):$(id -g) $HOME/.kube/config
+Take note that the kubeadm init command printed a long kubeadm join command to the screen. You will need that kubeadm join command in the next step!
+
+Run the following command on the Kube master node to verify it is up and running:
+
+ kubectl version
+This command should return both a Client Version and a Server Version.
+
+Join the two Kube worker nodes to the cluster
+=============================================================
+
+
+Copy the kubeadm join command that was printed by the kubeadm init command earlier, with the token and hash. Run this command on both worker nodes, but make sure you add sudo in front of it:
+
+ sudo kubeadm join $some_ip:6443 --token $some_token --discovery-token-ca-cert-hash $some_hash
+Now, on the Kube master node, make sure your nodes joined the cluster successfully:
+
+ kubectl get nodes
+Verify that all three of your nodes are listed. It will look something like this:
+
+ NAME            STATUS     ROLES    AGE   VERSION
+ ip-10-0-1-101   NotReady   master   30s   v1.12.2
+ ip-10-0-1-102   NotReady   <none>   8s    v1.12.2
+ ip-10-0-1-103   NotReady   <none>   5s    v1.12.2
+Note that the nodes are expected to be in the NotReady state for now.
+
+Set up cluster networking with flannel
+=======================================================
+
+
+Turn on iptables bridge calls on all three nodes:
+
+ echo "net.bridge.bridge-nf-call-iptables=1" | sudo tee -a /etc/sysctl.conf
+ sudo sysctl -p
+Next, run this only on the Kube master node:
+
+ kubectl apply -f https://raw.githubusercontent.com/coreos/flannel/bc79dd1505b0c8681ece4de4c0d86c5cd2643275/Documentation/kube-flannel.yml
+Now flannel is installed! Make sure it is working by checking the node status again:
+
+ kubectl get nodes
+After a short time, all three nodes should be in the Ready state. If they are not all Ready the first time you run kubectl get nodes, wait a few moments and try again. It should look something like this:
+
+ NAME            STATUS   ROLES    AGE   VERSION
+ ip-10-0-1-101   Ready    master   85s   v1.12.2
+ ip-10-0-1-102   Ready    <none>   63s   v1.12.2
+ ip-10-0-1-103   Ready    <none>   60s   v1.12.2
 
 
 
