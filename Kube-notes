@@ -1511,10 +1511,452 @@ List the contents of the directory:
 
  ls
 
+###########Securing Kubernetes Cluster:
+==========================================
+
+
+Configuring Network Policies:
+===================================
+
+Network policies allow you to specify which pods can talk to other pods. This helps when securing communication between pods, allowing you to identify ingress and egress rules. You can apply a network policy to a pod by using pod or namespace selectors. You can even choose a CIDR block range to apply the network policy. In this lesson, we’ll go through each of these options for network policies.
+
+Download the canal plugin:
+
+wget -O canal.yaml https://docs.projectcalico.org/v3.5/getting-started/kubernetes/installation/hosted/canal/canal.yaml
+Apply the canal plugin:
+
+kubectl apply -f canal.yaml
+The YAML for a deny-all NetworkPolicy:
+
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: deny-all
+spec:
+  podSelector: {}
+  policyTypes:
+  - Ingress
+Run a deployment to test the NetworkPolicy:
+
+kubectl run nginx --image=nginx --replicas=2
+Create a service for the deployment:
+
+kubectl expose deployment nginx --port=80
+Attempt to access the service by using a busybox interactive pod:
+
+kubectl run busybox --rm -it --image=busybox /bin/sh
+#wget --spider --timeout=1 nginx
+
+
+
+The YAML for a pod selector NetworkPolicy:
+
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: db-netpolicy
+spec:
+  podSelector:
+    matchLabels:
+      app: db
+  ingress:
+  - from:
+    - podSelector:
+        matchLabels:
+          app: web
+    ports:
+    - port: 5432
+Label a pod to get the NetworkPolicy:
+
+kubectl label pods [pod_name] app=db
+The YAML for a namespace NetworkPolicy:
+
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: ns-netpolicy
+spec:
+  podSelector:
+    matchLabels:
+      app: db
+  ingress:
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          tenant: web
+    ports:
+    - port: 5432
+
+
+
+
+The YAML for an IP block NetworkPolicy:
+
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: ipblock-netpolicy
+spec:
+  podSelector:
+    matchLabels:
+      app: db
+  ingress:
+  - from:
+    - ipBlock:
+        cidr: 192.168.1.0/24
+
+
+
+The YAML for an egress NetworkPolicy:
+
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: egress-netpol
+spec:
+  podSelector:
+    matchLabels:
+      app: web
+  egress:
+  - to:
+    - podSelector:
+        matchLabels:
+          app: db
+    ports:
+    - port: 5432
+
+
+Creating TLS Certificates
+==================================
+
+
+A Certificate Authority (CA) is used to generate TLS certificates and authenticate to your API server. In this lesson, we’ll go through certificate requests and generating a new certificate.
+
+Find the CA certificate on a pod in your cluster:
+
+kubectl exec busybox -- ls /var/run/secrets/kubernetes.io/serviceaccount
+Download the binaries for the cfssl tool:
+
+wget -q --show-progress --https-only --timestamping \
+  https://pkg.cfssl.org/R1.2/cfssl_linux-amd64 \
+  https://pkg.cfssl.org/R1.2/cfssljson_linux-amd64
+Make the binary files executable:
+
+chmod +x cfssl_linux-amd64 cfssljson_linux-amd64
+Move the files into your bin directory:
+
+sudo mv cfssl_linux-amd64 /usr/local/bin/cfssl
+sudo mv cfssljson_linux-amd64 /usr/local/bin/cfssljson
+Check to see if you have cfssl installed correctly:
+
+cfssl version
+Create a CSR file:
+
+cat <<EOF | cfssl genkey - | cfssljson -bare server
+{
+  "hosts": [
+    "my-svc.my-namespace.svc.cluster.local",
+    "my-pod.my-namespace.pod.cluster.local",
+    "172.168.0.24",
+    "10.0.34.2"
+  ],
+  "CN": "my-pod.my-namespace.pod.cluster.local",
+  "key": {
+    "algo": "ecdsa",
+    "size": 256
+  }
+}
+EOF
+Create a CertificateSigningRequest API object:
+
+cat <<EOF | kubectl create -f -
+apiVersion: certificates.k8s.io/v1beta1
+kind: CertificateSigningRequest
+metadata:
+  name: pod-csr.web
+spec:
+  groups:
+  - system:authenticated
+  request: $(cat server.csr | base64 | tr -d '\n')
+  usages:
+  - digital signature
+  - key encipherment
+  - server auth
+EOF
+View the CSRs in the cluster:
+
+kubectl get csr
+View additional details about the CSR:
+
+kubectl describe csr pod-csr.web
+Approve the CSR:
+
+kubectl certificate approve pod-csr.web
+View the certificate within your CSR:
+
+kubectl get csr pod-csr.web -o yaml
+Extract and decode your certificate to use in a file:
+
+kubectl get csr pod-csr.web -o jsonpath='{.status.certificate}' \
+    | base64 --decode > server.crt
+
+
+
+
+Securing Persistent Key Value Store:
+========================================
+
+Secrets are used to secure sensitive data you may access from your pod. The data never gets written to disk because it's stored in an in-memory filesystem (tmpfs). Because secrets can be created independently of pods, there is less risk of the secret being exposed during the pod lifecycle.
+
+View the secrets in your cluster:
+
+kubectl get secrets
+View the default secret mounted to each pod:
+
+kubectl describe pods pod-with-defaults
+View the token, certificate, and namespace within the secret:
+
+kubectl describe secret
+Generate a key for your https server:
+
+openssl genrsa -out https.key 2048
+Generate a certificate for the https server:
+
+openssl req -new -x509 -key https.key -out https.cert -days 3650 -subj /CN=www.example.com
+Create an empty file to create the secret:
+
+touch file
+Create a secret from your key, cert, and file:
+
+kubectl create secret generic example-https --from-file=https.key --from-file=https.cert --from-file=file
+View the YAML from your new secret:
+
+kubectl get secrets example-https -o yaml
+Create the configMap that will mount to your pod:
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: config
+data:
+  my-nginx-config.conf: |
+    server {
+        listen              80;
+        listen              443 ssl;
+        server_name         www.example.com;
+        ssl_certificate     certs/https.cert;
+        ssl_certificate_key certs/https.key;
+        ssl_protocols       TLSv1 TLSv1.1 TLSv1.2;
+        ssl_ciphers         HIGH:!aNULL:!MD5;
+
+        location / {
+            root   /usr/share/nginx/html;
+            index  index.html index.htm;
+        }
+
+    }
+  sleep-interval: |
+    25
+The YAML for a pod using the new secret:
+
+apiVersion: v1
+kind: Pod
+metadata:
+  name: example-https
+spec:
+  containers:
+  - image: linuxacademycontent/fortune
+    name: html-web
+    env:
+    - name: INTERVAL
+      valueFrom:
+        configMapKeyRef:
+          name: config
+          key: sleep-interval
+    volumeMounts:
+    - name: html
+      mountPath: /var/htdocs
+  - image: nginx:alpine
+    name: web-server
+    volumeMounts:
+    - name: html
+      mountPath: /usr/share/nginx/html
+      readOnly: true
+    - name: config
+      mountPath: /etc/nginx/conf.d
+      readOnly: true
+    - name: certs
+      mountPath: /etc/nginx/certs/
+      readOnly: true
+    ports:
+    - containerPort: 80
+    - containerPort: 443
+  volumes:
+  - name: html
+    emptyDir: {}
+  - name: config
+    configMap:
+      name: config
+      items:
+      - key: my-nginx-config.conf
+        path: https.conf
+  - name: certs
+    secret:
+      secretName: example-https
+Describe the nginx conf via ConfigMap:
+
+kubectl describe configmap
+View the cert mounted on the container:
+
+kubectl exec example-https -c web-server -- mount | grep certs
+Use port forwarding on the pod to server traffic from 443:
+
+kubectl port-forward example-https 8443:443 &
+Curl the web server to get a response:
+
+curl https://localhost:8443 -k
+
+
+Creating a ClusterRole to Access a PV in Kubernetes
+======================================================
+
+
+We have been given access to a three-node cluster. Within that cluster, a PV has already been provisioned. We will need to make sure we can access the PV directly from a pod in our cluster. By default, pods cannot access PVs directly, so we will need to create a ClusterRole and test the access after it's been created. Every ClusterRole requires a ClusterRoleBinding to bind the role to a user, service account, or group. After we have created the ClusterRole and ClusterRoleBinding, we will try to access the PV directly from a pod.
+
+Log in to the Kube Master server using the credentials on the lab page (either in your local terminal, using the Instant Terminal feature, or using the public IP), and work through the objectives listed.
+
+View the Persistent Volume.
+Use the following command to view the Persistent Volume within the cluster:
+
+ kubectl get pv
+Create a ClusterRole.
+Use the following command to create the ClusterRole:
+
+ kubectl create clusterrole pv-reader --verb=get,list --resource=persistentvolumes
+Create a ClusterRoleBinding.
+Use the following command to create the ClusterRoleBinding:
+
+ kubectl create clusterrolebinding pv-test --clusterrole=pv-reader --serviceaccount=web:default
+Create a pod to access the PV.
+Use the following YAML to create a pod that will proxy the connection and allow you to curl the address:
+
+ apiVersion: v1
+ kind: Pod
+ metadata:
+   name: curlpod
+   namespace: web
+ spec:
+   containers:
+   - image: tutum/curl
+     command: ["sleep", "9999999"]
+     name: main
+   - image: linuxacademycontent/kubectl-proxy
+     name: proxy
+   restartPolicy: Always
+Use the following command to create the pod:
+
+ kubectl apply -f curlpod.yaml
+Request access to the PV from the pod.
+Use the following command (from within the pod) to access a shell from the pod:
+
+ kubectl exec -it curlpod -n web -- sh
+Use the following command to curl the PV resource:
+
+ curl localhost:8001/api/v1/persistentvolumes
+
+
+ouput:
+
+cloud_user@ip-10-0-1-101:~$ kubectl exec -it curlpod -n web -- sh
+Defaulting container name to main.
+Use 'kubectl describe pod/curlpod -n web' to see all of the containers in this pod.
+# curl localhost:8001/api/v1/persistentvolumes
+{
+  "kind": "PersistentVolumeList",
+  "apiVersion": "v1",
+  "metadata": {
+    "selfLink": "/api/v1/persistentvolumes",
+    "resourceVersion": "3790"
+  },
+  "items": [
+    {
+      "metadata": {
+        "name": "database-pv",
+        "selfLink": "/api/v1/persistentvolumes/database-pv",
+        "uid": "5abc04c4-84b7-11e9-b024-0a249169e49c",
+        "resourceVersion": "491",
+        "creationTimestamp": "2019-06-01T21:51:04Z",
+        "annotations": {
+          "kubectl.kubernetes.io/last-applied-configuration": "{\"apiVersion\":\"v1\",\"kind\":\"PersistentVolume\",\"metadata\":{\"annotations\":{},\"name\":\"database-pv\"},\"spec\":{\"accessModes\":[\"ReadWriteOnce\"],\"capacity\":{\"storage\":\"1Gi\"},\"hostPath\":{\"path\":\"/mnt/data\"},\"storageClassName\":\"local-storage\"}}\n"
+        },
+        "finalizers": [
+          "kubernetes.io/pv-protection"
+        ]
+      },
+      "spec": {
+        "capacity": {
+          "storage": "1Gi"
+        },
+        "hostPath": {
+          "path": "/mnt/data",
+          "type": ""
+        },
+        "accessModes": [
+          "ReadWriteOnce"
+        ],
+        "persistentVolumeReclaimPolicy": "Retain",
+        "storageClassName": "local-storage",
+        "volumeMode": "Filesystem"
+      },
+      "status": {
+        "phase": "Available"
+      }
+    }
+  ]
+}#     
+
+
 
 
 Monitoring the Cluster Components
 =============================================================
+
+
+We are able to monitor the CPU and memory utilization of our pods and nodes by using the metrics server. In this lesson, we’ll install the metrics server and see how the kubectl top command works.
+
+Clone the metrics server repository:
+
+git clone https://github.com/linuxacademy/metrics-server
+Install the metrics server in your cluster:
+
+kubectl apply -f ~/metrics-server/deploy/1.8+/
+Get a response from the metrics server API:
+
+kubectl get --raw /apis/metrics.k8s.io/
+Get the CPU and memory utilization of the nodes in your cluster:
+
+kubectl top node
+Get the CPU and memory utilization of the pods in your cluster:
+
+kubectl top pods
+Get the CPU and memory of pods in all namespaces:
+
+kubectl top pods --all-namespaces
+Get the CPU and memory of pods in only one namespace:
+
+kubectl top pods -n kube-system
+Get the CPU and memory of pods with a label selector:
+
+kubectl top pod -l run=pod-with-defaults
+Get the CPU and memory of a specific pod:
+
+kubectl top pod pod-with-defaults
+Get the CPU and memory of the containers inside the pod:
+
+kubectl top pods group-context --containers
+
+
+
 
 Troubleshooting:
 =============================
