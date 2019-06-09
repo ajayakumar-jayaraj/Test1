@@ -125,9 +125,11 @@ ETCDCTL_API=3 etcdctl --help
 Browse to the folder that contains the certificate files:
 
 cd /etc/kubernetes/pki/etcd/
-View that the snapshot was successful:
 
+View that the snapshot was successful:
 ETCDCTL_API=3 etcdctl --write-out=table snapshot status snapshot.db
+
+
 Zip up the contents of the etcd directory:
 
 sudo tar -zcvf etcd.tar.gz etcd
@@ -143,20 +145,23 @@ Pod and Node Networking
 Kubernetes keeps networking simple for effective communication between pods, even if they are located on a different node. In this lesson, we’ll talk about pod communication from within a node, including how to inspect the virtual interfaces, and then get into what happens when a pod wants to talk to another pod on a different node.
 
 See which node our pod is on:
-
 kubectl get pods -o wide
-Log in to the node:
 
+
+Log in to the node:
 ssh [node_name]
 View the node's virtual network interfaces:
-
 ifconfig
+
+
 View the containers in the pod:
 
 docker ps
-Get the process ID for the container:
 
+Get the process ID for the container:
 docker inspect --format '{{ .State.Pid }}' [container_id]
+
+
 Use nsenter to run a command in the process's network namespace:
 
 nsenter -t [container_pid] -n ip addr
@@ -182,7 +187,9 @@ spec:
     targetPort: 80
   selector:
     app: nginx
-Create a new deployment:
+
+
+kubectl Create a new deployment:
 
 kubectl run kubeserve2 --image=chadmcrowell/kubeserve2
 View the list of deployments:
@@ -201,8 +208,9 @@ View the services in your cluster:
 
 kubectl get services
 Watch as an external port is created for a service:
-
 kubectl get services -w
+
+
 Look at the YAML for a service:
 
 kubectl get services kubeserve2 -o yaml
@@ -215,6 +223,20 @@ kubectl describe services kubeserve
 Set the annotation to route load balancer traffic local to the node:
 
 kubectl annotate service kubeserve2 externalTrafficPolicy=Local
+
+Example:
+
+apiVersion: networking.k8s.io/v1beta1
+kind: Ingress
+metadata:
+  name: test-ingress
+spec:
+  backend:
+    serviceName: testsvc
+    servicePort: 80
+
+
+    
 The YAML for an Ingress resource:
 
 apiVersion: extensions/v1beta1
@@ -256,6 +278,8 @@ CoreDNS is now the new default DNS plugin for Kubernetes. In this lesson, we’l
 View the CoreDNS pods in the kube-system namespace:
 
 kubectl get pods -n kube-system
+
+
 View the CoreDNS deployment in your Kubernetes cluster:
 
 kubectl get deployments -n kube-system
@@ -3308,3 +3332,8 @@ kubectl config use-context
 https://kubernetes.io/docs/tasks/access-application-cluster/configure-access-multiple-clusters/#define-clusters-users-and-contexts
 
 
+Verify that you can communicate with your pod directly:
+
+ kubectl run busybox --rm -it --image=busybox /bin/sh
+ # wget -O- <pod_ip_address>:80
+ # wget --spider --timeout=1 webfront-service
